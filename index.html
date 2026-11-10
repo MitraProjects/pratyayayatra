@@ -47,7 +47,8 @@ const quizProgress=JSON.parse(localStorage.getItem('pyV5QuizProgress')||'{}');
 const $=id=>document.getElementById(id);
 function toast(s){$('toast').textContent=s;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),1800)}
 // Practice drafts: preserve in-progress answers for both अभ्यासः and अभ्यासशाला.
-const PRACTICE_DRAFTS_KEY='pyV5PracticeDrafts';
+// V5.4: isolate drafts from earlier builds so stale answers cannot leak forward.
+const PRACTICE_DRAFTS_KEY='pyV54PracticeDrafts';
 let practiceDirty=false, pendingLeave=null, activePracticeKey=null;
 function isPracticeView(){return reviewMode || tab===2 || tab===3;}
 function practiceKey(){return reviewMode?'mixed-review':`lesson-${current}-tab-${tab}`;}
