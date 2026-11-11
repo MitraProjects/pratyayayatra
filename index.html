@@ -60,7 +60,10 @@ const $=id=>document.getElementById(id);
 function toast(s){$('toast').textContent=s;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),1800)}
 // Practice drafts: preserve in-progress answers for both अभ्यासः and अभ्यासशाला.
 // V5.4: isolate drafts from earlier builds so stale answers cannot leak forward.
-const PRACTICE_DRAFTS_KEY='pyV54PracticeDrafts';
+// V5.8.2: fresh, shared draft store for every practice module.
+// Older V5.4 drafts are deliberately not imported, preventing stale answers
+// from earlier builds from reappearing. Course points/completion remain intact.
+const PRACTICE_DRAFTS_KEY='pyV582PracticeDrafts';
 let practiceDirty=false, pendingLeave=null, activePracticeKey=null;
 function isPracticeView(){return reviewMode || tab===2 || tab===3;}
 function practiceKey(){return reviewMode?'mixed-review':`lesson-${current}-tab-${tab}`;}
@@ -72,15 +75,56 @@ function clearPracticeDraft(){const key=activePracticeKey||practiceKey();const d
 function addPracticeSaveControl(){const root=$('lessonContent');if(!root||root.querySelector('.practice-save-bar'))return;const bar=document.createElement('div');bar.className='practice-save-bar';bar.innerHTML='<span>Drafts are saved on this device only.</span><button type="button" class="secondary" id="savePracticeNow">Save progress</button>';root.prepend(bar);bar.querySelector('button').onclick=()=>savePracticeDraft(true);}
 function restorePracticeDraft(){if(!isPracticeView())return;addPracticeSaveControl();const key=practiceKey();activePracticeKey=key;const draft=readDrafts()[key];practiceDirty=false;if(!draft)return;const fields=[...$('lessonContent').querySelectorAll('input,select,textarea')];(draft.fields||[]).forEach((v,i)=>{if(fields[i])fields[i].value=v.value??''});const feedback=[...$('lessonContent').querySelectorAll('.feedback,.activity-feedback,.task-feedback')];(draft.feedback||[]).forEach((v,i)=>{if(feedback[i]){feedback[i].textContent=v.text||'';feedback[i].className=v.className||feedback[i].className}});const cards=[...$('lessonContent').querySelectorAll('.studio-card,.activity,.creative-task,.exercise')];(draft.checked||[]).forEach((v,i)=>{if(cards[i]&&v)cards[i].dataset.checked=v});}
 function markPracticeDirty(){if(!isPracticeView())return;practiceDirty=true;activePracticeKey=practiceKey();}
-function requestLeave(action){if(isPracticeView()&&practiceDirty){pendingLeave=action;$('leaveOverlay').hidden=false;return;}action();}
-function finishLeave(mode){const action=pendingLeave;if(!action){$('leaveOverlay').hidden=true;return;}try{const key=activePracticeKey||practiceKey();const drafts=readDrafts();if(mode==='save'){drafts[key]=capturePractice();writeDrafts(drafts);toast('अभ्यासः सुरक्षितः — Practice saved.');}else if(mode==='discard'){delete drafts[key];writeDrafts(drafts);}practiceDirty=false;$('leaveOverlay').hidden=true;pendingLeave=null;action();}catch(err){console.error('Could not finish practice navigation:',err);toast('Could not save this activity. Please try again.');}}
+function requestLeave(action){
+  if(typeof action!=='function') return;
+  if(isPracticeView() && practiceDirty){
+    pendingLeave=action;
+    $('leaveOverlay').hidden=false;
+    return;
+  }
+  action();
+}
+function finishLeave(mode){
+  const action=pendingLeave;
+  if(!action){$('leaveOverlay').hidden=true;return;}
+  if(mode!=='save' && mode!=='discard') return;
+  try{
+    const key=activePracticeKey||practiceKey();
+    const drafts=readDrafts();
+    if(mode==='save'){
+      drafts[key]=capturePractice();
+      writeDrafts(drafts);
+      toast('अभ्यासः सुरक्षितः — Practice saved.');
+    }else{
+      // Discard both the current unsaved edits and any older saved draft
+      // for this activity, so returning opens a clean exercise.
+      delete drafts[key];
+      writeDrafts(drafts);
+    }
+    practiceDirty=false;
+    $('leaveOverlay').hidden=true;
+    pendingLeave=null;
+    action();
+  }catch(err){
+    console.error('Could not finish practice navigation:',err);
+    toast(mode==='save'?'Could not save this activity. Please try again.':'Could not discard this activity. Please try again.');
+  }
+}
 document.addEventListener('input',e=>{if(e.target.closest('#lessonContent')&&e.target.matches('input,select,textarea'))markPracticeDirty();});
 document.addEventListener('change',e=>{if(e.target.closest('#lessonContent')&&e.target.matches('input,select,textarea'))markPracticeDirty();});
 document.addEventListener('click',e=>{if(e.target.closest('#lessonContent')&&e.target.matches('.check-task,.opt'))markPracticeDirty();});
 $('stayBtn').onclick=e=>{e.preventDefault();e.stopPropagation();$('leaveOverlay').hidden=true;pendingLeave=null};
 $('saveLeaveBtn').onclick=e=>{e.preventDefault();e.stopPropagation();finishLeave('save')};
 $('discardBtn').onclick=e=>{e.preventDefault();e.stopPropagation();finishLeave('discard')};
-window.addEventListener('beforeunload',e=>{if(isPracticeView()&&practiceDirty){savePracticeDraft(false);e.preventDefault();e.returnValue='';}});
+// A refresh/close must never silently convert unsaved edits into saved drafts.
+// Previously saved drafts remain available; new edits persist only after an
+// explicit Save progress or Save & leave action.
+window.addEventListener('beforeunload',e=>{
+  if(isPracticeView()&&practiceDirty){
+    e.preventDefault();
+    e.returnValue='';
+  }
+});
 
 function renderNav(){$('lessonList').innerHTML=lessons.map((l,i)=>`<button class="lessonNav ${i===current?'active':''} ${completed.includes(i)?'done':''}" data-i="${i}"><span class="num">${completed.includes(i)?'✓':String(i+1).padStart(2,'0')}</span><span><b class="dev">${l.title}</b><small>${l.unit}</small></span></button>`).join('');document.querySelectorAll('.lessonNav[data-i]').forEach(b=>b.onclick=()=>requestLeave(()=>load(+b.dataset.i)));let pct=Math.round(completed.length/lessons.length*100);$('progressBar').style.width=pct+'%';$('progressText').textContent=`${completed.length} of ${lessons.length} completed`;$('percent').textContent=pct+'%';$('pointsPill').textContent='✦ '+points+' points'}
 function quizKey(q){return q.includes('प्रकृतिः')?0:q.includes('कुत्र')?1:q.includes('धातुः')?1:q.includes('गम् + तुमुन्')?1:q.includes('पठितुम्')?0:q.includes('दृश्यरूपं')?0:q.includes('having done')?1:q.includes('कृ + क्त्वा')?2:q.includes('उपसर्गपूर्वक')?0:q.includes('क्त =')?1:q.includes('written')?0:q.includes('going')?1:q.includes('शानच् सामान्यतः')?0:q.includes('should be done')?1:q.includes('giver')?2:q.includes('तद्धितप्रत्ययाः सामान्यतः')?1:q.includes('बालः')?0:q.includes('wishes to go')?1:q.includes('having gone')?1:q.includes('“to read”')?0:q.includes('प्रातिपदिकात् सामान्यतः')?1:0}
